@@ -18,3 +18,7 @@ test('other books keep the existing expense default', () => {
   assert.deepEqual(defaultEntryForBook('默认账本'), { type: 'expense', category: '餐饮' })
   assert.deepEqual(defaultEntryForBook('旅行日志'), { type: 'expense', category: '餐饮' })
 })
+
+test('built-in salary book remains income after renaming', () => {
+  assert.deepEqual(defaultEntryForBook('我的固定入账', true), { type: 'income', category: '工资' })
+})

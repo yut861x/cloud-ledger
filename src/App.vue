@@ -25,6 +25,13 @@ const rows = ref([])
 const books = ref([])
 const activeBookId = ref(null)
 const booksLoading = ref(false)
+const salarySchedule = ref(null)
+const salaryLoading = ref(false)
+const salaryLoadError = ref('')
+const salaryModalOpen = ref(false)
+const salarySaving = ref(false)
+const salaryError = ref('')
+const salaryForm = ref({ amount: '', pay_day: 1, pay_time: '09:00', enabled: true })
 const bookError = ref('')
 const bookModalOpen = ref(false)
 const bookSaving = ref(false)
@@ -45,6 +52,7 @@ const form = ref(emptyForm())
 let authSubscription
 let requestId = 0
 let booksRequestId = 0
+let salaryRequestId = 0
 
 function emptyForm() {
   return { id: null, book_id: activeBookId.value, type: 'expense', amount: '', category: '餐饮', occurred_on: localDate(), note: '' }
@@ -89,8 +97,10 @@ onMounted(async () => {
       rows.value = []
       books.value = []
       activeBookId.value = null
+      salarySchedule.value = null
       ++requestId
       ++booksRequestId
+      ++salaryRequestId
     }
   })
   authSubscription = listener.subscription
@@ -101,6 +111,15 @@ watch([month, activeBookId], () => {
   if (session.value?.user && activeBookId.value) loadRows()
   else { ++requestId; rows.value = []; loading.value = false }
 })
+watch(activeBookId, () => {
+  if (activeBook.value?.is_salary) loadSalarySchedule()
+  else {
+    ++salaryRequestId
+    salarySchedule.value = null
+    salaryLoading.value = false
+    salaryLoadError.value = ''
+  }
+})
 
 async function loadBooks() {
   if (!session.value?.user || !supabase) return
@@ -108,7 +127,10 @@ async function loadBooks() {
   booksLoading.value = true
   bookError.value = ''
   const { data, error: queryError } = await supabase.from('ledger_books')
-    .select('id,name,is_default,created_at').order('is_default', { ascending: false }).order('created_at')
+    .select('id,name,is_default,is_salary,created_at')
+    .order('is_default', { ascending: false })
+    .order('is_salary', { ascending: false })
+    .order('created_at')
   if (currentRequest !== booksRequestId) return
   booksLoading.value = false
   if (queryError) { bookError.value = `读取账本失败：${queryError.message}`; return }
@@ -116,6 +138,65 @@ async function loadBooks() {
   if (!books.value.some((book) => book.id === activeBookId.value)) {
     activeBookId.value = books.value.find((book) => book.is_default)?.id || books.value[0]?.id || null
   }
+}
+
+async function loadSalarySchedule() {
+  if (!session.value?.user || !activeBook.value?.is_salary) return
+  const bookId = activeBookId.value
+  const currentRequest = ++salaryRequestId
+  salaryLoading.value = true
+  salaryLoadError.value = ''
+  const { data, error: queryError } = await supabase.from('salary_schedules')
+    .select('id,amount,pay_day,pay_time,enabled').eq('book_id', bookId).maybeSingle()
+  if (currentRequest !== salaryRequestId) return
+  salaryLoading.value = false
+  if (queryError) { salaryLoadError.value = `读取工资计划失败：${queryError.message}`; return }
+  salarySchedule.value = data
+}
+
+function openSalaryModal() {
+  const current = salarySchedule.value
+  salaryForm.value = {
+    amount: current ? String(current.amount) : '',
+    pay_day: current?.pay_day || 1,
+    pay_time: current?.pay_time?.slice(0, 5) || '09:00',
+    enabled: current?.enabled ?? true,
+  }
+  salaryError.value = ''
+  salaryModalOpen.value = true
+}
+
+async function saveSalarySchedule() {
+  salaryError.value = ''
+  const amount = Number(salaryForm.value.amount)
+  const payDay = Number(salaryForm.value.pay_day)
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 9999999999.99 ||
+    !/^\d+(\.\d{1,2})?$/.test(String(salaryForm.value.amount))) {
+    salaryError.value = '金额须大于 0，最多两位小数。'; return
+  }
+  if (!Number.isInteger(payDay) || payDay < 1 || payDay > 31) {
+    salaryError.value = '到账日须在 1–31 日之间。'; return
+  }
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(salaryForm.value.pay_time)) {
+    salaryError.value = '请选择有效时间。'; return
+  }
+  salarySaving.value = true
+  const payload = {
+    amount: amount.toFixed(2), pay_day: payDay,
+    pay_time: salaryForm.value.pay_time, enabled: salaryForm.value.enabled,
+  }
+  const result = salarySchedule.value
+    ? await supabase.from('salary_schedules').update(payload)
+      .eq('id', salarySchedule.value.id).select('id').single()
+    : await supabase.from('salary_schedules').insert({
+      ...payload, user_id: session.value.user.id, book_id: activeBookId.value,
+    }).select('id').single()
+  salarySaving.value = false
+  if (result.error) { salaryError.value = `保存失败：${result.error.message}`; return }
+  salaryModalOpen.value = false
+  await loadSalarySchedule()
+  notice.value = '工资自动记录计划已保存'
+  window.setTimeout(() => { notice.value = '' }, 3500)
 }
 
 function selectBook(id) {
@@ -201,7 +282,7 @@ function openCreate() {
   if (!activeBookId.value) { bookError.value = '请先选择账本。'; return }
   form.value = {
     ...emptyForm(),
-    ...defaultEntryForBook(activeBook.value?.name),
+    ...defaultEntryForBook(activeBook.value?.name, activeBook.value?.is_salary),
     occurred_on: month.value === localDate().slice(0, 7) ? localDate() : `${month.value}-01`,
   }
   formError.value = ''
@@ -219,7 +300,7 @@ function changeFormType(type) {
 function changeEntryBook() {
   if (form.value.id) return
   const book = books.value.find((item) => item.id === form.value.book_id)
-  Object.assign(form.value, defaultEntryForBook(book?.name))
+  Object.assign(form.value, defaultEntryForBook(book?.name, book?.is_salary))
 }
 
 async function saveRow() {
@@ -302,6 +383,8 @@ function switchView(view) { activeView.value = view; mobileNav.value = false }
     <div class="workspace"><header class="topbar"><button class="icon-button menu-button" aria-label="打开菜单" @click="mobileNav = true"><Menu :size="22" /></button><div class="breadcrumb">{{ activeBook?.name || '我的账本' }} <span>/</span> <strong>{{ activeView === 'overview' ? '总览' : activeView === 'transactions' ? '全部账目' : '分类统计' }}</strong></div><div class="topbar-right"><span class="today-label"><CalendarDays :size="16" /> {{ localDate() }}</span><div class="avatar top-avatar">{{ session.user.email?.slice(0, 1).toUpperCase() }}</div></div></header>
       <main class="content"><div class="page-heading"><div><p class="eyebrow">PERSONAL FINANCE</p><h1>{{ activeView === 'overview' ? '你的财务，一目了然' : activeView === 'transactions' ? '每一笔，都值得记录' : '看看钱都花在哪里' }}</h1><p class="page-description">{{ activeView === 'overview' ? '简单整理收支，认真过好每一天。' : activeView === 'transactions' ? '查看、筛选和管理你的日常账目。' : '从分类数据里，发现更适合自己的生活节奏。' }}</p></div><button class="btn btn-primary add-button" :disabled="!activeBookId" @click="openCreate"><Plus :size="18" /> 记一笔</button></div>
         <div class="period-bar"><div class="period-picker"><button class="icon-button" aria-label="上个月" @click="changeMonth(-1)"><ArrowLeft :size="17" /></button><span>{{ monthTitle(month) }}</span><button class="icon-button" aria-label="下个月" @click="changeMonth(1)"><ArrowRight :size="17" /></button></div><span class="period-hint">{{ rows.length }} 笔记录</span></div>
+        <section v-if="activeBook?.is_salary" class="salary-banner" aria-label="每月工资自动记录"><div class="salary-banner-icon"><CalendarDays :size="20" /></div><div class="salary-banner-copy"><strong>每月自动记工资</strong><p v-if="salaryLoading">正在读取工资计划…</p><p v-else-if="salarySchedule">{{ salarySchedule.enabled ? '已启用' : '已暂停' }} · 每月 {{ salarySchedule.pay_day }} 日 {{ salarySchedule.pay_time.slice(0, 5) }}（北京时间） · {{ money(salarySchedule.amount) }}</p><p v-else>设定到账日期、时间和金额，到点自动记入工资账本。</p></div><button class="btn btn-subtle" :disabled="salaryLoading || !!salaryLoadError" @click="openSalaryModal">{{ salarySchedule ? '修改计划' : '设置计划' }}</button></section>
+        <div v-if="salaryLoadError" class="inline-error" role="alert">{{ salaryLoadError }} <button @click="loadSalarySchedule">重试</button></div>
         <div v-if="bookError && !bookModalOpen" class="inline-error" role="alert">{{ bookError }} <button @click="loadBooks">重试</button></div><div v-if="error" class="inline-error" role="alert">{{ error }} <button @click="loadRows">重试</button></div><div v-if="notice" class="toast" role="status"><Check :size="17" />{{ notice }}</div>
         <section class="stat-grid"><div class="stat-card balance-card"><div class="stat-top"><span>本月结余</span><span class="stat-icon"><WalletCards :size="21" /></span></div><strong>{{ money(balance) }}</strong><p>收入减去支出，刚刚好</p><span class="balance-decor decor-one"></span><span class="balance-decor decor-two"></span></div><div class="stat-card"><div class="stat-top"><span>本月收入</span><span class="stat-icon income-icon"><ArrowDownLeft :size="21" /></span></div><strong>{{ money(income) }}</strong><p><span class="status-dot income-dot"></span> {{ rows.filter((r) => r.type === 'income').length }} 笔收入</p></div><div class="stat-card"><div class="stat-top"><span>本月支出</span><span class="stat-icon expense-icon"><ArrowUpRight :size="21" /></span></div><strong>{{ money(expense) }}</strong><p><span class="status-dot expense-dot"></span> {{ rows.filter((r) => r.type === 'expense').length }} 笔支出</p></div></section>
         <div class="dashboard-grid"><section v-if="activeView !== 'insights'" class="panel transactions-panel" :class="{ wide: activeView === 'transactions' }"><div class="panel-header"><div><h2>{{ activeView === 'overview' ? '最近记录' : '全部账目' }}</h2><p>{{ activeView === 'overview' ? '看看最近的收支动态' : '本月账目明细' }}</p></div><button v-if="activeView === 'overview'" class="text-link" @click="switchView('transactions')">查看全部 <ArrowRight :size="16" /></button><button v-else class="btn btn-subtle" :disabled="filteredRows.length === 0" @click="exportCsv"><Download :size="16" /> 导出 CSV</button></div><div v-if="activeView === 'transactions'" class="list-toolbar"><div class="search-box"><Search :size="17" /><input v-model="search" placeholder="搜索分类、备注或金额" aria-label="搜索账目" /></div><div class="select-wrap"><Settings2 :size="16" /><select v-model="filter" aria-label="按类型筛选"><option value="all">全部类型</option><option value="expense">只看支出</option><option value="income">只看收入</option></select><ChevronDown :size="15" /></div></div><div v-if="loading" class="empty-state">正在读取账目…</div><div v-else-if="listRows.length === 0" class="empty-state"><div class="empty-icon"><WalletCards :size="25" /></div><strong>{{ rows.length ? '没有符合条件的账目' : '这个月还没有记录' }}</strong><p>{{ rows.length ? '试试调整搜索或筛选条件。' : '记下第一笔收支，开始了解自己的日常。' }}</p><button v-if="!rows.length" class="btn btn-subtle" @click="openCreate"><Plus :size="16" /> 记一笔</button></div><div v-else class="transaction-list"><div v-for="row in listRows" :key="row.id" class="transaction-row"><div class="category-icon" :style="{ '--category-color': categoryMeta(row.type, row.category).color }"><component :is="iconFor(row.type, row.category)" :size="20" /></div><div class="transaction-name"><strong>{{ row.note || row.category }}</strong><span>{{ row.category }} · {{ row.occurred_on }}</span></div><strong class="transaction-amount" :class="row.type">{{ row.type === 'income' ? '+' : '−' }}{{ money(row.amount) }}</strong><div class="row-actions"><button class="icon-button" :aria-label="`编辑 ${row.note || row.category}`" @click="openEdit(row)"><Pencil :size="16" /></button><button class="icon-button danger-hover" :aria-label="`删除 ${row.note || row.category}`" @click="deleteRow(row)"><Trash2 :size="16" /></button></div></div></div></section>
@@ -311,5 +394,6 @@ function switchView(view) { activeView.value = view; mobileNav.value = false }
   </div>
 
   <div v-if="modalOpen" class="modal-backdrop" @click.self="modalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><div><p class="eyebrow">A NEW ENTRY</p><h2 id="modal-title">{{ form.id ? '编辑账目' : '记一笔' }}</h2></div><button class="icon-button" aria-label="关闭" @click="modalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveRow"><label for="entry-book">账本</label><div class="select-input"><select id="entry-book" v-model="form.book_id" @change="changeEntryBook"><option v-for="book in books" :key="book.id" :value="book.id">{{ book.name }}</option></select><ChevronDown :size="18" /></div><div class="type-toggle"><button type="button" :class="{ selected: form.type === 'expense' }" @click="changeFormType('expense')"><ArrowUpRight :size="17" /> 支出</button><button type="button" :class="{ selected: form.type === 'income' }" @click="changeFormType('income')"><ArrowDownLeft :size="17" /> 收入</button></div><label for="amount">金额</label><div class="amount-input"><span>¥</span><input id="amount" v-model="form.amount" type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required autofocus /></div><label for="category">分类</label><div class="select-input"><select id="category" v-model="form.category"><option v-for="item in categories[form.type]" :key="item.name" :value="item.name">{{ item.name }}</option></select><ChevronDown :size="18" /></div><label for="occurred-on">日期</label><input id="occurred-on" v-model="form.occurred_on" type="date" required /><label for="note">备注 <span class="optional">选填</span></label><input id="note" v-model="form.note" type="text" maxlength="200" placeholder="记下一点细节…" /><p v-if="formError" class="form-message error" role="alert">{{ formError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="modalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中…' : '保存账目' }}</button></div></form></div></div>
+  <div v-if="salaryModalOpen" class="modal-backdrop" @click.self="salaryModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="salary-modal-title"><div class="modal-header"><div><p class="eyebrow">MONTHLY INCOME</p><h2 id="salary-modal-title">每月自动记工资</h2></div><button class="icon-button" aria-label="关闭" @click="salaryModalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveSalarySchedule"><label for="salary-amount">每月金额</label><div class="amount-input"><span>¥</span><input id="salary-amount" v-model="salaryForm.amount" type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required autofocus /></div><div class="salary-fields"><div><label for="salary-day">每月到账日</label><div class="select-input"><select id="salary-day" v-model.number="salaryForm.pay_day"><option v-for="day in 31" :key="day" :value="day">{{ day }} 日</option></select><ChevronDown :size="17" /></div></div><div><label for="salary-time">到账时间（北京时间）</label><input id="salary-time" v-model="salaryForm.pay_time" type="time" required /></div></div><p class="salary-hint">如设为 31 日，短月按当月最后一天记录。计划从下一个尚未到达的到账时间起生效。</p><label class="salary-switch" for="salary-enabled"><input id="salary-enabled" v-model="salaryForm.enabled" type="checkbox" /><span>启用自动记账</span></label><p v-if="salaryError" class="form-message error" role="alert">{{ salaryError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="salaryModalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="salarySaving">{{ salarySaving ? '保存中…' : '保存计划' }}</button></div></form></div></div>
   <div v-if="bookModalOpen" class="modal-backdrop" @click.self="bookModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="book-modal-title"><div class="modal-header"><div><p class="eyebrow">LEDGER BOOK</p><h2 id="book-modal-title">{{ editingBookId ? '重命名账本' : '新增账本' }}</h2></div><button class="icon-button" aria-label="关闭" @click="bookModalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveBook"><label for="book-name">账本名称</label><input id="book-name" v-model="bookName" type="text" maxlength="40" placeholder="例如：旅行、家庭开支" required autofocus /><p v-if="bookError" class="form-message error" role="alert">{{ bookError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="bookModalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="bookSaving">{{ bookSaving ? '保存中…' : '保存账本' }}</button></div></form></div></div>
 </template>

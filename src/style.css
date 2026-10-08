@@ -185,3 +185,43 @@ h1,h2{letter-spacing:-.035em}
   .stat-grid{grid-template-columns:1fr}
   .balance-card{grid-column:auto}
 }
+
+
+.salary-banner{
+  display:flex;
+  align-items:center;
+  gap:15px;
+  margin:-2px 0 21px;
+  padding:17px 20px;
+  border:1px solid #e8e0d8;
+  border-radius:15px;
+  background:#f1eae3;
+}
+.salary-banner-icon{
+  width:39px;
+  height:39px;
+  flex:none;
+  display:grid;
+  place-items:center;
+  border-radius:10px;
+  background:#fffefa;
+  color:#92735e;
+}
+.salary-banner-copy{flex:1;min-width:0}
+.salary-banner-copy strong{display:block;font-size:13px;font-weight:600;color:#453a32;margin-bottom:4px}
+.salary-banner-copy p{font-size:11px;color:#8c7c70;margin:0;line-height:1.5}
+.salary-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.salary-fields label{display:block}
+.salary-fields .select-input,.salary-fields input{margin-bottom:0}
+.salary-hint{font-size:11px;line-height:1.65;color:#a0958c;margin:14px 0 18px}
+.salary-switch{display:flex;align-items:center;gap:10px;margin:0 0 20px!important;cursor:pointer}
+.salary-switch input{width:17px;height:17px;margin:0;accent-color:#504236}
+.salary-switch span{font-size:12px}
+@media(max-width:700px){
+  .salary-banner{align-items:flex-start;flex-wrap:wrap;padding:16px}
+  .salary-banner .btn{margin-left:54px}
+}
+@media(max-width:410px){
+  .salary-fields{grid-template-columns:1fr}
+  .salary-fields .select-input{margin-bottom:14px}
+}
