@@ -34,3 +34,15 @@ export const monthTitle = (month) => {
 }
 
 export const csvCell = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`
+
+
+export const defaultEntryForBook = (name = '') => {
+  const title = name.trim()
+  if (!/(副业|工资|红包|收入|奖金|薪资|兼职|收益|理财|利息|分红)/.test(title)) {
+    return { type: 'expense', category: '餐饮' }
+  }
+  const category = /(工资|薪资)/.test(title) ? '工资'
+    : /奖金/.test(title) ? '奖金'
+      : /(理财|利息|分红)/.test(title) ? '理财' : '其他'
+  return { type: 'income', category }
+}
