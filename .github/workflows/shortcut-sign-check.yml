@@ -1,0 +1,34 @@
+name: Check Apple Shortcuts signing
+on:
+  workflow_dispatch:
+jobs:
+  sign-check:
+    runs-on: macos-latest
+    steps:
+      - name: Create minimal test shortcut
+        run: |
+          python3 - <<'PY'
+          import plistlib, uuid
+          data = {
+              'WFWorkflowActions': [{
+                  'WFWorkflowActionIdentifier': 'is.workflow.actions.gettext',
+                  'WFWorkflowActionParameters': {
+                      'UUID': str(uuid.uuid4()).upper(),
+                      'WFTextActionText': 'Shortcut signing check',
+                  },
+              }],
+              'WFWorkflowClientVersion': '2302.0.4',
+              'WFWorkflowClientRelease': '2302.0.4',
+              'WFWorkflowMinimumClientVersion': 900,
+              'WFWorkflowMinimumClientVersionString': '900',
+              'WFWorkflowTypes': [],
+          }
+          with open('sign-check-unsigned.shortcut', 'wb') as f:
+              plistlib.dump(data, f)
+          PY
+      - name: Sign with Apple Shortcuts
+        run: shortcuts sign --mode anyone --input sign-check-unsigned.shortcut --output sign-check-signed.shortcut
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-shortcut-check
+          path: sign-check-signed.shortcut
