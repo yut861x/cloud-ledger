@@ -5,6 +5,7 @@
 ## 功能
 
 - 邮箱注册与登录（Supabase Auth）
+- 默认账本与自定义账本；可新增、切换、重命名账本，旧账目自动归入默认账本
 - 收入、支出的新增、编辑、删除
 - 按月查看结余、收入、支出和分类占比
 - 类型筛选、搜索、导出当前筛选结果为 CSV
@@ -16,7 +17,8 @@
 ```text
 .
 ├── .github/workflows/deploy.yml  # GitHub Pages 自动部署
-├── supabase/schema.sql            # 建表、索引、权限与 RLS
+├── supabase/schema.sql            # 初始账目表、索引、权限与 RLS
+├── supabase/add_ledger_books.sql  # 多账本迁移，保留已有账目
 ├── src/
 │   ├── lib/supabase.js           # Supabase 客户端
 │   ├── lib/ledger.js             # 分类与格式化工具
@@ -32,12 +34,12 @@
 ## 1. 建立 Supabase 项目
 
 1. 在 [Supabase Dashboard](https://supabase.com/dashboard) 新建项目。
-2. 打开 **SQL Editor**，完整执行 [`supabase/schema.sql`](supabase/schema.sql)。这会建立 `transactions` 表、用户与日期索引，以及按 `auth.uid()` 限制读写的 RLS 策略。
+2. 打开 **SQL Editor**，先完整执行 [`supabase/schema.sql`](supabase/schema.sql)，再执行 [`supabase/add_ledger_books.sql`](supabase/add_ledger_books.sql)。后者会为每位已有用户建立默认账本，将旧账目归入其中，并为新用户自动建立默认账本。两份脚本均只需执行一次。
 3. 在 **Authentication → Providers → Email** 检查邮箱登录设置。若启用邮箱确认，注册后需要点邮件中的链接才能登录。测试期如果关闭确认，也可以直接注册登录。
 4. 在项目的 **Connect** 面板或 **Settings → API Keys** 找到 **Project URL** 和 **publishable key**。只用 publishable key；不要把 secret/service_role key 放进前端或 GitHub。
 5. 在 **Authentication → URL Configuration** 设置 Site URL 与 Redirect URLs：本地先加入 `http://localhost:5173/`，部署后再加入实际 Pages 地址，例如 `https://USERNAME.github.io/REPO/`。若启用邮箱确认，邮件回跳需要允许这个地址。
 
-数据库字段：`id`、`user_id`、`type`、`amount`、`category`、`note`、`occurred_on`、`created_at`。金额使用 `numeric(12,2)`，按本地所选日期存 `date`；界面当前以人民币显示。前端分类与 SQL 约束同步维护，增加分类时两处都要更新。
+账本表为 `ledger_books`；账目通过 `book_id` 归属到账本，数据库外键确保账本与账目属于同一用户。数据库字段：`id`、`user_id`、`book_id`、`type`、`amount`、`category`、`note`、`occurred_on`、`created_at`。金额使用 `numeric(12,2)`，按本地所选日期存 `date`；界面当前以人民币显示。前端分类与 SQL 约束同步维护，增加分类时两处都要更新。
 
 ## 2. 本地运行
 
@@ -75,4 +77,4 @@ npm run dev
 
 ## 安全说明
 
-GitHub Pages 只托管静态文件。用户直接通过 Supabase Auth 和 Data API 访问数据；安全边界是数据库 RLS，不是前端的筛选逻辑。不要关闭 `transactions` 的 RLS，也不要把 Supabase secret key 或 service_role key 放入 `VITE_` 环境变量。若账目需要长期保存，建议定期在 Supabase 导出数据库备份；应用内 CSV 可导出当前月份及当前筛选范围的记录。
+GitHub Pages 只托管静态文件。用户直接通过 Supabase Auth 和 Data API 访问数据；安全边界是数据库 RLS，不是前端的筛选逻辑。不要关闭 `transactions` 或 `ledger_books` 的 RLS，也不要把 Supabase secret key 或 service_role key 放入 `VITE_` 环境变量。若账目需要长期保存，建议定期在 Supabase 导出数据库备份；应用内 CSV 可导出当前月份及当前筛选范围的记录。
