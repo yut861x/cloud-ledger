@@ -5,8 +5,9 @@
 ## 功能
 
 - 邮箱注册与登录（Supabase Auth）
-- 注册后自动创建默认账本和排在其下的工资账本；可新增、切换、重命名账本，旧账目自动归入默认账本
+- 注册后自动创建默认账本、工资账本和排在工资账本下的固定支出账本；可新增、切换、重命名账本，旧账目自动归入默认账本
 - 工资账本可设置每月到账日、北京时间和金额，到点自动生成工资收入，可随时修改或暂停
+- 固定支出账本默认记支出；可设置每月日期、北京时间、金额和用途，按时自动生成带用途备注的支出
 - “副业、工资、红包、收入”等账本新增记录时默认选收入，仍可手动切换
 - 收入、支出的新增、编辑、删除
 - 按月查看结余、收入、支出和分类占比
@@ -22,6 +23,7 @@
 ├── supabase/schema.sql            # 初始账目表、索引、权限与 RLS
 ├── supabase/add_ledger_books.sql  # 多账本迁移，保留已有账目
 ├── supabase/add_salary_schedule.sql # 工资账本与定时入账
+├── supabase/add_fixed_expense_schedule.sql # 固定支出账本与定时支出
 ├── src/
 │   ├── lib/supabase.js           # Supabase 客户端
 │   ├── lib/ledger.js             # 分类与格式化工具
@@ -37,14 +39,14 @@
 ## 1. 建立 Supabase 项目
 
 1. 在 [Supabase Dashboard](https://supabase.com/dashboard) 新建项目。
-2. 打开 **SQL Editor**，先完整执行 [`supabase/schema.sql`](supabase/schema.sql)，再执行 [`supabase/add_ledger_books.sql`](supabase/add_ledger_books.sql)，最后执行 [`supabase/add_salary_schedule.sql`](supabase/add_salary_schedule.sql)。后两份脚本会迁移旧账目、创建默认账本和工资账本，并启用 Supabase Cron。三份脚本均只需执行一次。
+2. 打开 **SQL Editor**，先完整执行 [`supabase/schema.sql`](supabase/schema.sql)，再执行 [`supabase/add_ledger_books.sql`](supabase/add_ledger_books.sql)，接着执行 [`supabase/add_salary_schedule.sql`](supabase/add_salary_schedule.sql)，最后执行 [`supabase/add_fixed_expense_schedule.sql`](supabase/add_fixed_expense_schedule.sql)。这些脚本会迁移旧账目、创建三个内置账本，并启用 Supabase Cron。每份脚本只需执行一次。
 3. 在 **Authentication → Providers → Email** 检查邮箱登录设置。若启用邮箱确认，注册后需要点邮件中的链接才能登录。测试期如果关闭确认，也可以直接注册登录。
 4. 在项目的 **Connect** 面板或 **Settings → API Keys** 找到 **Project URL** 和 **publishable key**。只用 publishable key；不要把 secret/service_role key 放进前端或 GitHub。
 5. 在 **Authentication → URL Configuration** 设置 Site URL 与 Redirect URLs：本地先加入 `http://localhost:5173/`，部署后再加入实际 Pages 地址，例如 `https://USERNAME.github.io/REPO/`。若启用邮箱确认，邮件回跳需要允许这个地址。
 
 账本表为 `ledger_books`；账目通过 `book_id` 归属到账本，数据库外键确保账本与账目属于同一用户。数据库字段：`id`、`user_id`、`book_id`、`type`、`amount`、`category`、`note`、`occurred_on`、`created_at`。金额使用 `numeric(12,2)`，按本地所选日期存 `date`；界面当前以人民币显示。前端分类与 SQL 约束同步维护，增加分类时两处都要更新。
 
-工资计划按北京时间（Asia/Shanghai）执行。若设为 31 日，短月按当月最后一天记录；新建或修改计划后，从下一个尚未到达的计划时间起生效。自动写入的账目可手动编辑或删除，已处理的月份不会再次写入。计划未配置时不会自动生成账目。
+工资与固定支出计划均按北京时间（Asia/Shanghai）执行。若设为 31 日，短月按当月最后一天记录；新建或修改计划后，从下一个尚未到达的计划时间起生效。自动写入的账目可手动编辑或删除，已处理的月份不会再次写入。计划未配置时不会自动生成账目。
 
 ## 2. 本地运行
 

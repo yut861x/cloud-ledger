@@ -32,7 +32,7 @@ const salaryLoadError = ref('')
 const salaryModalOpen = ref(false)
 const salarySaving = ref(false)
 const salaryError = ref('')
-const salaryForm = ref({ amount: '', pay_day: 1, pay_time: '09:00', enabled: true })
+const salaryForm = ref({ amount: '', pay_day: 1, pay_time: '09:00', purpose: '', enabled: true })
 const bookError = ref('')
 const bookModalOpen = ref(false)
 const bookSaving = ref(false)
@@ -61,6 +61,9 @@ function emptyForm() {
 }
 
 const activeBook = computed(() => books.value.find((book) => book.id === activeBookId.value))
+const scheduledBook = computed(() => activeBook.value?.is_salary || activeBook.value?.is_fixed_expense)
+const scheduleTable = computed(() => activeBook.value?.is_fixed_expense ? 'fixed_expense_schedules' : 'salary_schedules')
+const scheduleKind = computed(() => activeBook.value?.is_fixed_expense ? '固定支出' : '工资')
 
 const monthStart = computed(() => `${month.value}-01`)
 const nextMonth = computed(() => {
@@ -118,7 +121,7 @@ watch([month, activeBookId], () => {
   else { ++requestId; rows.value = []; loading.value = false }
 })
 watch(activeBookId, () => {
-  if (activeBook.value?.is_salary) loadSalarySchedule()
+  if (scheduledBook.value) loadSalarySchedule()
   else {
     ++salaryRequestId
     salarySchedule.value = null
@@ -133,9 +136,10 @@ async function loadBooks() {
   booksLoading.value = true
   bookError.value = ''
   const { data, error: queryError } = await supabase.from('ledger_books')
-    .select('id,name,is_default,is_salary,created_at')
+    .select('id,name,is_default,is_salary,is_fixed_expense,created_at')
     .order('is_default', { ascending: false })
     .order('is_salary', { ascending: false })
+    .order('is_fixed_expense', { ascending: false })
     .order('created_at')
   if (currentRequest !== booksRequestId) return
   booksLoading.value = false
@@ -147,16 +151,17 @@ async function loadBooks() {
 }
 
 async function loadSalarySchedule() {
-  if (!session.value?.user || !activeBook.value?.is_salary) return
+  if (!session.value?.user || !scheduledBook.value) return
   const bookId = activeBookId.value
   const currentRequest = ++salaryRequestId
   salaryLoading.value = true
+  salarySchedule.value = null
   salaryLoadError.value = ''
-  const { data, error: queryError } = await supabase.from('salary_schedules')
-    .select('id,amount,pay_day,pay_time,enabled').eq('book_id', bookId).maybeSingle()
+  const { data, error: queryError } = await supabase.from(scheduleTable.value)
+    .select(activeBook.value?.is_fixed_expense ? 'id,amount,pay_day,pay_time,purpose,enabled' : 'id,amount,pay_day,pay_time,enabled').eq('book_id', bookId).maybeSingle()
   if (currentRequest !== salaryRequestId) return
   salaryLoading.value = false
-  if (queryError) { salaryLoadError.value = `读取工资计划失败：${queryError.message}`; return }
+  if (queryError) { salaryLoadError.value = `读取${scheduleKind.value}计划失败：${queryError.message}`; return }
   salarySchedule.value = data
 }
 
@@ -166,6 +171,7 @@ function openSalaryModal() {
     amount: current ? String(current.amount) : '',
     pay_day: current?.pay_day || 1,
     pay_time: current?.pay_time?.slice(0, 5) || '09:00',
+    purpose: current?.purpose || '',
     enabled: current?.enabled ?? true,
   }
   salaryError.value = ''
@@ -181,27 +187,31 @@ async function saveSalarySchedule() {
     salaryError.value = '金额须大于 0，最多两位小数。'; return
   }
   if (!Number.isInteger(payDay) || payDay < 1 || payDay > 31) {
-    salaryError.value = '到账日须在 1–31 日之间。'; return
+    salaryError.value = '计划日期须在 1–31 日之间。'; return
   }
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(salaryForm.value.pay_time)) {
     salaryError.value = '请选择有效时间。'; return
+  }
+  if (activeBook.value?.is_fixed_expense && !salaryForm.value.purpose.trim()) {
+    salaryError.value = '请填写用途。'; return
   }
   salarySaving.value = true
   const payload = {
     amount: amount.toFixed(2), pay_day: payDay,
     pay_time: salaryForm.value.pay_time, enabled: salaryForm.value.enabled,
+    ...(activeBook.value?.is_fixed_expense ? { purpose: salaryForm.value.purpose.trim() } : {}),
   }
   const result = salarySchedule.value
-    ? await supabase.from('salary_schedules').update(payload)
+    ? await supabase.from(scheduleTable.value).update(payload)
       .eq('id', salarySchedule.value.id).select('id').single()
-    : await supabase.from('salary_schedules').insert({
+    : await supabase.from(scheduleTable.value).insert({
       ...payload, user_id: session.value.user.id, book_id: activeBookId.value,
     }).select('id').single()
   salarySaving.value = false
   if (result.error) { salaryError.value = `保存失败：${result.error.message}`; return }
   salaryModalOpen.value = false
   await loadSalarySchedule()
-  notice.value = '工资自动记录计划已保存'
+  notice.value = `${scheduleKind.value}自动记录计划已保存`
   window.setTimeout(() => { notice.value = '' }, 3500)
 }
 
@@ -288,7 +298,7 @@ function openCreate() {
   if (!activeBookId.value) { bookError.value = '请先选择账本。'; return }
   form.value = {
     ...emptyForm(),
-    ...defaultEntryForBook(activeBook.value?.name, activeBook.value?.is_salary),
+    ...defaultEntryForBook(activeBook.value?.name, activeBook.value?.is_salary, activeBook.value?.is_fixed_expense),
     occurred_on: month.value === localDate().slice(0, 7) ? localDate() : `${month.value}-01`,
   }
   formError.value = ''
@@ -306,7 +316,7 @@ function changeFormType(type) {
 function changeEntryBook() {
   if (form.value.id) return
   const book = books.value.find((item) => item.id === form.value.book_id)
-  Object.assign(form.value, defaultEntryForBook(book?.name, book?.is_salary))
+  Object.assign(form.value, defaultEntryForBook(book?.name, book?.is_salary, book?.is_fixed_expense))
 }
 
 async function saveRow() {
@@ -389,7 +399,7 @@ function switchView(view) { activeView.value = view; mobileNav.value = false }
     <div class="workspace"><header class="topbar"><button class="icon-button menu-button" aria-label="打开菜单" @click="mobileNav = true"><Menu :size="22" /></button><div class="breadcrumb">{{ activeBook?.name || '我的账本' }} <span>/</span> <strong>{{ activeView === 'overview' ? '总览' : activeView === 'transactions' ? '全部账目' : activeView === 'calendar' ? '日历' : '分类统计' }}</strong></div><div class="topbar-right"><span class="today-label"><CalendarDays :size="16" /> {{ localDate() }}</span><div class="avatar top-avatar">{{ session.user.email?.slice(0, 1).toUpperCase() }}</div></div></header>
       <main class="content"><div class="page-heading"><div><p class="eyebrow">PERSONAL FINANCE</p><h1>{{ activeView === 'overview' ? '你的财务，一目了然' : activeView === 'transactions' ? '每一笔，都值得记录' : activeView === 'calendar' ? '把日子和收支放在一起' : '看看钱都花在哪里' }}</h1><p class="page-description">{{ activeView === 'overview' ? '简单整理收支，认真过好每一天。' : activeView === 'transactions' ? '查看、筛选和管理你的日常账目。' : activeView === 'calendar' ? '每日净收入与中国大陆放假调休，一眼看清。' : '从分类数据里，发现更适合自己的生活节奏。' }}</p></div><button class="btn btn-primary add-button" :disabled="!activeBookId" @click="openCreate"><Plus :size="18" /> 记一笔</button></div>
         <div class="period-bar"><div class="period-picker"><button class="icon-button" aria-label="上个月" @click="changeMonth(-1)"><ArrowLeft :size="17" /></button><span>{{ monthTitle(month) }}</span><button class="icon-button" aria-label="下个月" @click="changeMonth(1)"><ArrowRight :size="17" /></button></div><span class="period-hint">{{ rows.length }} 笔记录</span></div>
-        <section v-if="activeBook?.is_salary" class="salary-banner" aria-label="每月工资自动记录"><div class="salary-banner-icon"><CalendarDays :size="20" /></div><div class="salary-banner-copy"><strong>每月自动记工资</strong><p v-if="salaryLoading">正在读取工资计划…</p><p v-else-if="salarySchedule">{{ salarySchedule.enabled ? '已启用' : '已暂停' }} · 每月 {{ salarySchedule.pay_day }} 日 {{ salarySchedule.pay_time.slice(0, 5) }}（北京时间） · {{ money(salarySchedule.amount) }}</p><p v-else>设定到账日期、时间和金额，到点自动记入工资账本。</p></div><button class="btn btn-subtle" :disabled="salaryLoading || !!salaryLoadError" @click="openSalaryModal">{{ salarySchedule ? '修改计划' : '设置计划' }}</button></section>
+        <section v-if="scheduledBook" class="salary-banner" :aria-label="`每月${scheduleKind}自动记录`"><div class="salary-banner-icon"><CalendarDays :size="20" /></div><div class="salary-banner-copy"><strong>每月自动记{{ scheduleKind }}</strong><p v-if="salaryLoading">正在读取工资计划…</p><p v-else-if="salarySchedule">{{ salarySchedule.enabled ? '已启用' : '已暂停' }} · 每月 {{ salarySchedule.pay_day }} 日 {{ salarySchedule.pay_time.slice(0, 5) }}（北京时间） · {{ money(salarySchedule.amount) }}<template v-if="activeBook?.is_fixed_expense"> · {{ salarySchedule.purpose }}</template></p><p v-else>设定每月日期、时间和金额，到点自动记入{{ scheduleKind }}账本。</p></div><button class="btn btn-subtle" :disabled="salaryLoading || !!salaryLoadError" @click="openSalaryModal">{{ salarySchedule ? '修改计划' : '设置计划' }}</button></section>
         <div v-if="salaryLoadError" class="inline-error" role="alert">{{ salaryLoadError }} <button @click="loadSalarySchedule">重试</button></div>
         <div v-if="bookError && !bookModalOpen" class="inline-error" role="alert">{{ bookError }} <button @click="loadBooks">重试</button></div><div v-if="error" class="inline-error" role="alert">{{ error }} <button @click="loadRows">重试</button></div><div v-if="notice" class="toast" role="status"><Check :size="17" />{{ notice }}</div>
         <section class="stat-grid"><div class="stat-card balance-card"><div class="stat-top"><span>本月结余</span><span class="stat-icon"><WalletCards :size="21" /></span></div><strong>{{ money(balance) }}</strong><p>收入减去支出，刚刚好</p><span class="balance-decor decor-one"></span><span class="balance-decor decor-two"></span></div><div class="stat-card"><div class="stat-top"><span>本月收入</span><span class="stat-icon income-icon"><ArrowDownLeft :size="21" /></span></div><strong>{{ money(income) }}</strong><p><span class="status-dot income-dot"></span> {{ rows.filter((r) => r.type === 'income').length }} 笔收入</p></div><div class="stat-card"><div class="stat-top"><span>本月支出</span><span class="stat-icon expense-icon"><ArrowUpRight :size="21" /></span></div><strong>{{ money(expense) }}</strong><p><span class="status-dot expense-dot"></span> {{ rows.filter((r) => r.type === 'expense').length }} 笔支出</p></div></section>
@@ -397,14 +407,14 @@ function switchView(view) { activeView.value = view; mobileNav.value = false }
           <section class="panel insights-panel" :class="{ wide: activeView === 'insights' }"><div class="panel-header"><div><h2>支出分类</h2><p>了解钱花在哪些地方</p></div><div class="panel-icon"><BarChart3 :size="19" /></div></div><div v-if="loading" class="empty-state small-empty">正在统计…</div><div v-else-if="!expenseGroups.length" class="empty-state small-empty"><div class="empty-icon"><BarChart3 :size="24" /></div><strong>暂无支出数据</strong><p>添加支出后，这里会显示分类占比。</p></div><div v-else class="category-list"><div v-for="group in expenseGroups" :key="group.name" class="category-group"><div class="category-line"><span class="category-label"><span class="category-mini" :style="{ background: categoryMeta('expense', group.name).color }"></span>{{ group.name }}</span><strong>{{ money(group.amount) }}</strong></div><div class="progress-track"><div class="progress-fill" :style="{ width: `${group.percent}%`, background: categoryMeta('expense', group.name).color }"></div></div><span class="category-percent">{{ group.percent.toFixed(1) }}%</span></div></div><div v-if="expenseGroups.length" class="insights-footer"><span>最大支出分类</span><strong>{{ expenseGroups[0].name }} · {{ expenseGroups[0].percent.toFixed(1) }}%</strong></div></section></div>
         <section v-if="activeView === 'calendar'" class="calendar-panel" aria-label="月历">
           <div class="calendar-head"><div><h2>{{ monthTitle(month) }} · 收支日历</h2><p>当前账本：{{ activeBook?.name }} · 每日净收入 = 收入 − 支出</p></div><div class="calendar-legend"><span><i class="legend-holiday"></i> 假期</span><span><i class="legend-workday"></i> 调休上班</span></div></div>
-          <div class="calendar-grid"><div v-for="weekday in ['一', '二', '三', '四', '五', '六', '日']" :key="weekday" class="calendar-weekday">周{{ weekday }}</div><template v-for="(day, index) in days" :key="day?.date || `blank-${index}`"><div v-if="!day" class="calendar-empty"></div><button v-else type="button" class="calendar-day" :class="{ selected: selectedDay === day.date, today: localDate() === day.date, holiday: day.kind === 'holiday', workday: day.kind === 'workday' }" :aria-label="`${day.date}${day.label ? ` ${day.label}` : ''}，净收入${day.net.toFixed(2)}元`" @click="selectedDay = day.date"><span class="calendar-day-top"><strong>{{ day.day }}</strong><em v-if="day.kind">{{ day.kind === 'holiday' ? '休' : '班' }}</em></span><small v-if="day.label" class="calendar-holiday-name">{{ day.label }}</small><span class="calendar-net" :class="day.net > 0 ? 'positive' : 'nonpositive'">{{ day.net > 0 ? '+' : day.net < 0 ? '−' : '' }}¥{{ money(Math.abs(day.net)) }}</span></button></template></div>
-          <div class="calendar-bottom"><div class="calendar-source" v-if="holidaySources[Number(month.slice(0, 4))]">假期与调休依据：<a :href="holidaySources[Number(month.slice(0, 4))]" target="_blank" rel="noopener noreferrer">国务院办公厅 {{ month.slice(0, 4) }} 年通知 ↗</a></div><div class="calendar-source" v-else>该年份的官方放假调休安排尚未录入，仅展示每日收支；不推测假期。</div><div class="calendar-detail"><div><h3>{{ selectedDay }} 的账目</h3><p>{{ selectedDayRows.length }} 笔记录</p></div><strong :class="selectedDayNet > 0 ? 'positive' : 'nonpositive'">净收入 {{ selectedDayNet > 0 ? '+' : selectedDayNet < 0 ? '−' : '' }}¥{{ money(Math.abs(selectedDayNet)) }}</strong></div><div v-if="!selectedDayRows.length" class="calendar-no-rows">当天暂无账目</div><div v-for="row in selectedDayRows" :key="row.id" class="calendar-entry"><span>{{ row.note || row.category }} <small>· {{ row.category }}</small></span><strong :class="row.type === 'income' ? 'positive' : 'nonpositive'">{{ row.type === 'income' ? '+' : '−' }}¥{{ money(row.amount) }}</strong></div></div>
+          <div class="calendar-grid"><div v-for="weekday in ['一', '二', '三', '四', '五', '六', '日']" :key="weekday" class="calendar-weekday">周{{ weekday }}</div><template v-for="(day, index) in days" :key="day?.date || `blank-${index}`"><div v-if="!day" class="calendar-empty"></div><button v-else type="button" class="calendar-day" :class="{ selected: selectedDay === day.date, today: localDate() === day.date, holiday: day.kind === 'holiday', workday: day.kind === 'workday' }" :aria-label="`${day.date}${day.label ? ` ${day.label}` : ''}，净收入${day.net.toFixed(2)}元`" @click="selectedDay = day.date"><span class="calendar-day-top"><strong>{{ day.day }}</strong><em v-if="day.kind">{{ day.kind === 'holiday' ? '休' : '班' }}</em></span><small v-if="day.label" class="calendar-holiday-name">{{ day.label }}</small><span class="calendar-net" :class="day.net > 0 ? 'positive' : 'nonpositive'">{{ day.net > 0 ? '+' : day.net < 0 ? '−' : '' }}{{ money(Math.abs(day.net)) }}</span></button></template></div>
+          <div class="calendar-bottom"><div class="calendar-source" v-if="holidaySources[Number(month.slice(0, 4))]">假期与调休依据：<a :href="holidaySources[Number(month.slice(0, 4))]" target="_blank" rel="noopener noreferrer">国务院办公厅 {{ month.slice(0, 4) }} 年通知 ↗</a></div><div class="calendar-source" v-else>该年份的官方放假调休安排尚未录入，仅展示每日收支；不推测假期。</div><div class="calendar-detail"><div><h3>{{ selectedDay }} 的账目</h3><p>{{ selectedDayRows.length }} 笔记录</p></div><strong :class="selectedDayNet > 0 ? 'positive' : 'nonpositive'">净收入 {{ selectedDayNet > 0 ? '+' : selectedDayNet < 0 ? '−' : '' }}{{ money(Math.abs(selectedDayNet)) }}</strong></div><div v-if="!selectedDayRows.length" class="calendar-no-rows">当天暂无账目</div><div v-for="row in selectedDayRows" :key="row.id" class="calendar-entry"><span>{{ row.note || row.category }} <small>· {{ row.category }}</small></span><strong :class="row.type === 'income' ? 'positive' : 'nonpositive'">{{ row.type === 'income' ? '+' : '−' }}{{ money(row.amount) }}</strong></div></div>
         </section>
         <p class="content-footnote">日常账本 <span>·</span> 用简单的方式，认真记录生活。</p>
       </main></div>
   </div>
 
   <div v-if="modalOpen" class="modal-backdrop" @click.self="modalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><div><p class="eyebrow">A NEW ENTRY</p><h2 id="modal-title">{{ form.id ? '编辑账目' : '记一笔' }}</h2></div><button class="icon-button" aria-label="关闭" @click="modalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveRow"><label for="entry-book">账本</label><div class="select-input"><select id="entry-book" v-model="form.book_id" @change="changeEntryBook"><option v-for="book in books" :key="book.id" :value="book.id">{{ book.name }}</option></select><ChevronDown :size="18" /></div><div class="type-toggle"><button type="button" :class="{ selected: form.type === 'expense' }" @click="changeFormType('expense')"><ArrowUpRight :size="17" /> 支出</button><button type="button" :class="{ selected: form.type === 'income' }" @click="changeFormType('income')"><ArrowDownLeft :size="17" /> 收入</button></div><label for="amount">金额</label><div class="amount-input"><span>¥</span><input id="amount" v-model="form.amount" type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required autofocus /></div><label for="category">分类</label><div class="select-input"><select id="category" v-model="form.category"><option v-for="item in categories[form.type]" :key="item.name" :value="item.name">{{ item.name }}</option></select><ChevronDown :size="18" /></div><label for="occurred-on">日期</label><input id="occurred-on" v-model="form.occurred_on" type="date" required /><label for="note">备注 <span class="optional">选填</span></label><input id="note" v-model="form.note" type="text" maxlength="200" placeholder="记下一点细节…" /><p v-if="formError" class="form-message error" role="alert">{{ formError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="modalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中…' : '保存账目' }}</button></div></form></div></div>
-  <div v-if="salaryModalOpen" class="modal-backdrop" @click.self="salaryModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="salary-modal-title"><div class="modal-header"><div><p class="eyebrow">MONTHLY INCOME</p><h2 id="salary-modal-title">每月自动记工资</h2></div><button class="icon-button" aria-label="关闭" @click="salaryModalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveSalarySchedule"><label for="salary-amount">每月金额</label><div class="amount-input"><span>¥</span><input id="salary-amount" v-model="salaryForm.amount" type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required autofocus /></div><div class="salary-fields"><div><label for="salary-day">每月到账日</label><div class="select-input"><select id="salary-day" v-model.number="salaryForm.pay_day"><option v-for="day in 31" :key="day" :value="day">{{ day }} 日</option></select><ChevronDown :size="17" /></div></div><div><label for="salary-time">到账时间（北京时间）</label><input id="salary-time" v-model="salaryForm.pay_time" type="time" required /></div></div><p class="salary-hint">如设为 31 日，短月按当月最后一天记录。计划从下一个尚未到达的到账时间起生效。</p><label class="salary-switch" for="salary-enabled"><input id="salary-enabled" v-model="salaryForm.enabled" type="checkbox" /><span>启用自动记账</span></label><p v-if="salaryError" class="form-message error" role="alert">{{ salaryError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="salaryModalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="salarySaving">{{ salarySaving ? '保存中…' : '保存计划' }}</button></div></form></div></div>
+  <div v-if="salaryModalOpen" class="modal-backdrop" @click.self="salaryModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="salary-modal-title"><div class="modal-header"><div><p class="eyebrow">MONTHLY ENTRY</p><h2 id="salary-modal-title">每月自动记{{ scheduleKind }}</h2></div><button class="icon-button" aria-label="关闭" @click="salaryModalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveSalarySchedule"><label for="salary-amount">每月金额</label><div class="amount-input"><span>¥</span><input id="salary-amount" v-model="salaryForm.amount" type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required autofocus /></div><div class="salary-fields"><div><label for="salary-day">每月记账日</label><div class="select-input"><select id="salary-day" v-model.number="salaryForm.pay_day"><option v-for="day in 31" :key="day" :value="day">{{ day }} 日</option></select><ChevronDown :size="17" /></div></div><div><label for="salary-time">记账时间（北京时间）</label><input id="salary-time" v-model="salaryForm.pay_time" type="time" required /></div></div><template v-if="activeBook?.is_fixed_expense"><label for="schedule-purpose">用途</label><input id="schedule-purpose" v-model="salaryForm.purpose" type="text" maxlength="100" placeholder="例如：房租、会员费" required /></template><p class="salary-hint">如设为 31 日，短月按当月最后一天记录。计划从下一个尚未到达的记账时间起生效。</p><label class="salary-switch" for="salary-enabled"><input id="salary-enabled" v-model="salaryForm.enabled" type="checkbox" /><span>启用自动记账</span></label><p v-if="salaryError" class="form-message error" role="alert">{{ salaryError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="salaryModalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="salarySaving">{{ salarySaving ? '保存中…' : '保存计划' }}</button></div></form></div></div>
   <div v-if="bookModalOpen" class="modal-backdrop" @click.self="bookModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="book-modal-title"><div class="modal-header"><div><p class="eyebrow">LEDGER BOOK</p><h2 id="book-modal-title">{{ editingBookId ? '重命名账本' : '新增账本' }}</h2></div><button class="icon-button" aria-label="关闭" @click="bookModalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveBook"><label for="book-name">账本名称</label><input id="book-name" v-model="bookName" type="text" maxlength="40" placeholder="例如：旅行、家庭开支" required autofocus /><p v-if="bookError" class="form-message error" role="alert">{{ bookError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="bookModalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="bookSaving">{{ bookSaving ? '保存中…' : '保存账本' }}</button></div></form></div></div>
 </template>

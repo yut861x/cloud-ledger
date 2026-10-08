@@ -36,7 +36,8 @@ export const monthTitle = (month) => {
 export const csvCell = (value) => `"${String(value ?? '').replaceAll('"', '""')}"`
 
 
-export const defaultEntryForBook = (name = '', isSalary = false) => {
+export const defaultEntryForBook = (name = '', isSalary = false, isFixedExpense = false) => {
+  if (isFixedExpense) return { type: 'expense', category: '其他' }
   const title = name.trim()
   if (!isSalary && !/(副业|工资|红包|收入|奖金|薪资|兼职|收益|理财|利息|分红)/.test(title)) {
     return { type: 'expense', category: '餐饮' }
