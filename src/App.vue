@@ -26,6 +26,11 @@ const rows = ref([])
 const books = ref([])
 const activeBookId = ref(null)
 const booksLoading = ref(false)
+const shortcutModalOpen = ref(false)
+const shortcutTokenStatus = ref(null)
+const shortcutToken = ref('')
+const shortcutBusy = ref(false)
+const shortcutError = ref('')
 const salarySchedule = ref(null)
 const salaryLoading = ref(false)
 const salaryLoadError = ref('')
@@ -107,6 +112,9 @@ onMounted(async () => {
       books.value = []
       activeBookId.value = null
       salarySchedule.value = null
+      shortcutTokenStatus.value = null
+      shortcutToken.value = ''
+      shortcutModalOpen.value = false
       ++requestId
       ++booksRequestId
       ++salaryRequestId
@@ -283,6 +291,42 @@ async function submitAuth() {
   } finally { authBusy.value = false }
 }
 
+async function openShortcutModal() {
+  shortcutModalOpen.value = true
+  shortcutToken.value = ''
+  shortcutError.value = ''
+  shortcutBusy.value = true
+  const { data, error: queryError } = await supabase.from('shortcut_tokens').select('created_at').maybeSingle()
+  shortcutBusy.value = false
+  if (queryError) shortcutError.value = `读取接入状态失败：${queryError.message}`
+  else shortcutTokenStatus.value = data
+}
+
+async function rotateShortcutToken() {
+  shortcutBusy.value = true
+  shortcutError.value = ''
+  const { data, error: callError } = await supabase.rpc('rotate_shortcut_token')
+  shortcutBusy.value = false
+  if (callError) { shortcutError.value = `生成失败：${callError.message}`; return }
+  shortcutToken.value = data
+  shortcutTokenStatus.value = { created_at: new Date().toISOString() }
+}
+
+async function revokeShortcutToken() {
+  shortcutBusy.value = true
+  shortcutError.value = ''
+  const { error: callError } = await supabase.rpc('revoke_shortcut_token')
+  shortcutBusy.value = false
+  if (callError) { shortcutError.value = `撤销失败：${callError.message}`; return }
+  shortcutToken.value = ''
+  shortcutTokenStatus.value = null
+}
+
+async function copyShortcutToken() {
+  try { await navigator.clipboard.writeText(shortcutToken.value); notice.value = '密钥已复制' }
+  catch { shortcutError.value = '复制失败，请手动复制密钥。' }
+}
+
 async function logout() {
   const { error: signOutError } = await supabase.auth.signOut()
   if (signOutError) error.value = `退出失败：${signOutError.message}`
@@ -394,7 +438,7 @@ function switchView(view) { activeView.value = view; mobileNav.value = false }
   </main>
 
   <div v-else class="app-shell">
-    <aside class="sidebar" :class="{ 'is-open': mobileNav }"><div class="sidebar-top"><div class="brand-lockup"><div class="brand-icon"><WalletCards :size="23" /></div><span>日常账本</span></div><button class="icon-button mobile-close" aria-label="关闭菜单" @click="mobileNav = false"><X :size="20" /></button></div><div class="sidebar-section-label">工作空间</div><nav class="side-nav"><button :class="{ active: activeView === 'overview' }" @click="switchView('overview')"><LayoutDashboard :size="19" /> 总览</button><button :class="{ active: activeView === 'transactions' }" @click="switchView('transactions')"><WalletCards :size="19" /> 全部账目</button><button :class="{ active: activeView === 'insights' }" @click="switchView('insights')"><BarChart3 :size="19" /> 分类统计</button><button :class="{ active: activeView === 'calendar' }" @click="switchView('calendar')"><CalendarDays :size="19" /> 日历</button></nav><div class="books-heading"><span>账本</span><button class="icon-button" aria-label="新增账本" title="新增账本" @click="openBookModal()"><Plus :size="17" /></button></div><div class="book-list"><div v-if="booksLoading" class="book-status">正在读取账本…</div><div v-for="book in books" :key="book.id" class="book-item" :class="{ active: book.id === activeBookId }"><button class="book-select" :aria-current="book.id === activeBookId ? 'page' : undefined" @click="selectBook(book.id)"><WalletCards :size="17" /><span>{{ book.name }}</span><small v-if="book.is_default">默认</small></button><button class="icon-button book-edit" :aria-label="`重命名${book.name}`" :title="`重命名${book.name}`" @click="openBookModal(book)"><Pencil :size="14" /></button></div><div v-if="!booksLoading && !books.length" class="book-status">暂无账本</div></div><div class="sidebar-bottom"><div class="sidebar-note"><span class="note-spark">✦</span><strong>好习惯，从今天开始</strong><p>每一笔记录，都让生活更清晰一点。</p></div><div class="account-row"><div class="avatar">{{ session.user.email?.slice(0, 1).toUpperCase() }}</div><div class="account-text"><strong>{{ activeBook?.name || '我的账本' }}</strong><small :title="session.user.email">{{ session.user.email }}</small></div><button class="icon-button" aria-label="退出登录" title="退出登录" @click="logout"><LogOut :size="18" /></button></div></div></aside>
+    <aside class="sidebar" :class="{ 'is-open': mobileNav }"><div class="sidebar-top"><div class="brand-lockup"><div class="brand-icon"><WalletCards :size="23" /></div><span>日常账本</span></div><button class="icon-button mobile-close" aria-label="关闭菜单" @click="mobileNav = false"><X :size="20" /></button></div><div class="sidebar-section-label">工作空间</div><nav class="side-nav"><button :class="{ active: activeView === 'overview' }" @click="switchView('overview')"><LayoutDashboard :size="19" /> 总览</button><button :class="{ active: activeView === 'transactions' }" @click="switchView('transactions')"><WalletCards :size="19" /> 全部账目</button><button :class="{ active: activeView === 'insights' }" @click="switchView('insights')"><BarChart3 :size="19" /> 分类统计</button><button :class="{ active: activeView === 'calendar' }" @click="switchView('calendar')"><CalendarDays :size="19" /> 日历</button></nav><div class="books-heading"><span>账本</span><button class="icon-button" aria-label="新增账本" title="新增账本" @click="openBookModal()"><Plus :size="17" /></button></div><div class="book-list"><div v-if="booksLoading" class="book-status">正在读取账本…</div><div v-for="book in books" :key="book.id" class="book-item" :class="{ active: book.id === activeBookId }"><button class="book-select" :aria-current="book.id === activeBookId ? 'page' : undefined" @click="selectBook(book.id)"><WalletCards :size="17" /><span>{{ book.name }}</span><small v-if="book.is_default">默认</small></button><button class="icon-button book-edit" :aria-label="`重命名${book.name}`" :title="`重命名${book.name}`" @click="openBookModal(book)"><Pencil :size="14" /></button></div><div v-if="!booksLoading && !books.length" class="book-status">暂无账本</div></div><div class="sidebar-bottom"><button class="shortcut-entry-button" @click="openShortcutModal"><CalendarDays :size=16 /> 快捷指令接入</button><div class="sidebar-note"><span class="note-spark">✦</span><strong>好习惯，从今天开始</strong><p>每一笔记录，都让生活更清晰一点。</p></div><div class="account-row"><div class="avatar">{{ session.user.email?.slice(0, 1).toUpperCase() }}</div><div class="account-text"><strong>{{ activeBook?.name || '我的账本' }}</strong><small :title="session.user.email">{{ session.user.email }}</small></div><button class="icon-button" aria-label="退出登录" title="退出登录" @click="logout"><LogOut :size="18" /></button></div></div></aside>
     <div v-if="mobileNav" class="mobile-scrim" @click="mobileNav = false"></div>
     <div class="workspace"><header class="topbar"><button class="icon-button menu-button" aria-label="打开菜单" @click="mobileNav = true"><Menu :size="22" /></button><div class="breadcrumb">{{ activeBook?.name || '我的账本' }} <span>/</span> <strong>{{ activeView === 'overview' ? '总览' : activeView === 'transactions' ? '全部账目' : activeView === 'calendar' ? '日历' : '分类统计' }}</strong></div><div class="topbar-right"><span class="today-label"><CalendarDays :size="16" /> {{ localDate() }}</span><div class="avatar top-avatar">{{ session.user.email?.slice(0, 1).toUpperCase() }}</div></div></header>
       <main class="content"><div class="page-heading"><div><p class="eyebrow">PERSONAL FINANCE</p><h1>{{ activeView === 'overview' ? '你的财务，一目了然' : activeView === 'transactions' ? '每一笔，都值得记录' : activeView === 'calendar' ? '把日子和收支放在一起' : '看看钱都花在哪里' }}</h1><p class="page-description">{{ activeView === 'overview' ? '简单整理收支，认真过好每一天。' : activeView === 'transactions' ? '查看、筛选和管理你的日常账目。' : activeView === 'calendar' ? '每日净收入与中国大陆放假调休，一眼看清。' : '从分类数据里，发现更适合自己的生活节奏。' }}</p></div><button class="btn btn-primary add-button" :disabled="!activeBookId" @click="openCreate"><Plus :size="18" /> 记一笔</button></div>
@@ -414,6 +458,7 @@ function switchView(view) { activeView.value = view; mobileNav.value = false }
       </main></div>
   </div>
 
+  <div v-if="shortcutModalOpen" class="modal-backdrop" @click.self="shortcutModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="shortcut-modal-title"><div class="modal-header"><div><p class="eyebrow">IPHONE SHORTCUT</p><h2 id="shortcut-modal-title">快捷指令接入</h2></div><button class="icon-button" aria-label="关闭" @click="shortcutModalOpen = false"><X :size="20" /></button></div><p class="shortcut-help">生成专用密钥后，填入 iPhone 快捷指令的 HTTPS 请求。密钥仅能新增你自己的账目，请不要分享；重新生成会使旧密钥失效。</p><p class="shortcut-guide"><a href="https://github.com/yut861x/cloud-ledger/blob/main/SHORTCUT_SETUP.md" target="_blank" rel="noopener noreferrer">查看 iPhone 快捷指令配置步骤 ↗</a></p><p class="shortcut-status">{{ shortcutTokenStatus ? '已启用 · ' + new Date(shortcutTokenStatus.created_at).toLocaleString('zh-CN') : '尚未启用' }}</p><div v-if="shortcutToken" class="shortcut-token"><label for="shortcut-key">专用密钥（只显示这一次）</label><input id="shortcut-key" :value="shortcutToken" readonly @focus="$event.target.select()" /><button class="btn btn-subtle" @click="copyShortcutToken">复制密钥</button></div><p v-if="shortcutError" class="form-message error" role="alert">{{ shortcutError }}</p><div class="modal-actions"><button v-if="shortcutTokenStatus" class="btn btn-subtle" :disabled="shortcutBusy" @click="revokeShortcutToken">撤销密钥</button><button class="btn btn-primary" :disabled="shortcutBusy" @click="rotateShortcutToken">{{ shortcutBusy ? '处理中…' : shortcutTokenStatus ? '重新生成' : '生成密钥' }}</button></div></div></div>
   <div v-if="modalOpen" class="modal-backdrop" @click.self="modalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-header"><div><p class="eyebrow">A NEW ENTRY</p><h2 id="modal-title">{{ form.id ? '编辑账目' : '记一笔' }}</h2></div><button class="icon-button" aria-label="关闭" @click="modalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveRow"><label for="entry-book">账本</label><div class="select-input"><select id="entry-book" v-model="form.book_id" @change="changeEntryBook"><option v-for="book in books" :key="book.id" :value="book.id">{{ book.name }}</option></select><ChevronDown :size="18" /></div><div class="type-toggle"><button type="button" :class="{ selected: form.type === 'expense' }" @click="changeFormType('expense')"><ArrowUpRight :size="17" /> 支出</button><button type="button" :class="{ selected: form.type === 'income' }" @click="changeFormType('income')"><ArrowDownLeft :size="17" /> 收入</button></div><label for="amount">金额</label><div class="amount-input"><span>¥</span><input id="amount" v-model="form.amount" type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required autofocus /></div><label for="category">分类</label><div class="select-input"><select id="category" v-model="form.category"><option v-for="item in categories[form.type]" :key="item.name" :value="item.name">{{ item.name }}</option></select><ChevronDown :size="18" /></div><label for="occurred-on">日期</label><input id="occurred-on" v-model="form.occurred_on" type="date" required /><label for="note">备注 <span class="optional">选填</span></label><input id="note" v-model="form.note" type="text" maxlength="200" placeholder="记下一点细节…" /><p v-if="formError" class="form-message error" role="alert">{{ formError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="modalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中…' : '保存账目' }}</button></div></form></div></div>
   <div v-if="salaryModalOpen" class="modal-backdrop" @click.self="salaryModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="salary-modal-title"><div class="modal-header"><div><p class="eyebrow">MONTHLY ENTRY</p><h2 id="salary-modal-title">每月自动记{{ scheduleKind }}</h2></div><button class="icon-button" aria-label="关闭" @click="salaryModalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveSalarySchedule"><label for="salary-amount">每月金额</label><div class="amount-input"><span>¥</span><input id="salary-amount" v-model="salaryForm.amount" type="number" min="0.01" max="9999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required autofocus /></div><div class="salary-fields"><div><label for="salary-day">每月记账日</label><div class="select-input"><select id="salary-day" v-model.number="salaryForm.pay_day"><option v-for="day in 31" :key="day" :value="day">{{ day }} 日</option></select><ChevronDown :size="17" /></div></div><div><label for="salary-time">记账时间（北京时间）</label><input id="salary-time" v-model="salaryForm.pay_time" type="time" required /></div></div><template v-if="activeBook?.is_fixed_expense"><label for="schedule-purpose">用途</label><input id="schedule-purpose" v-model="salaryForm.purpose" type="text" maxlength="100" placeholder="例如：房租、会员费" required /></template><p class="salary-hint">如设为 31 日，短月按当月最后一天记录。计划从下一个尚未到达的记账时间起生效。</p><label class="salary-switch" for="salary-enabled"><input id="salary-enabled" v-model="salaryForm.enabled" type="checkbox" /><span>启用自动记账</span></label><p v-if="salaryError" class="form-message error" role="alert">{{ salaryError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="salaryModalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="salarySaving">{{ salarySaving ? '保存中…' : '保存计划' }}</button></div></form></div></div>
   <div v-if="bookModalOpen" class="modal-backdrop" @click.self="bookModalOpen = false"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="book-modal-title"><div class="modal-header"><div><p class="eyebrow">LEDGER BOOK</p><h2 id="book-modal-title">{{ editingBookId ? '重命名账本' : '新增账本' }}</h2></div><button class="icon-button" aria-label="关闭" @click="bookModalOpen = false"><X :size="20" /></button></div><form @submit.prevent="saveBook"><label for="book-name">账本名称</label><input id="book-name" v-model="bookName" type="text" maxlength="40" placeholder="例如：旅行、家庭开支" required autofocus /><p v-if="bookError" class="form-message error" role="alert">{{ bookError }}</p><div class="modal-actions"><button type="button" class="btn btn-subtle" @click="bookModalOpen = false">取消</button><button type="submit" class="btn btn-primary" :disabled="bookSaving">{{ bookSaving ? '保存中…' : '保存账本' }}</button></div></form></div></div>
