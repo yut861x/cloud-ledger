@@ -5,7 +5,7 @@ begin;
 
 create extension if not exists pg_cron;
 
--- 工资账本固定排在默认账本之后，即使日后改名也保留位置。
+-- 工资账本固定排在日常消费之后，即使日后改名也保留位置。
 alter table public.ledger_books
   add column is_salary boolean not null default false;
 
@@ -33,7 +33,7 @@ set search_path = ''
 as $$
 begin
   insert into public.ledger_books (user_id, name, is_default)
-  values (new.id, '默认账本', true);
+  values (new.id, '日常消费', true);
   insert into public.ledger_books (user_id, name, is_salary)
   values (new.id, '工资账本', true);
   return new;

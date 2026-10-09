@@ -27,7 +27,7 @@ set search_path = ''
 as $$
 begin
   insert into public.ledger_books (user_id, name, is_default)
-  values (new.id, '默认账本', true);
+  values (new.id, '日常消费', true);
   insert into public.ledger_books (user_id, name, is_salary)
   values (new.id, '工资账本', true);
   insert into public.ledger_books (user_id, name, is_fixed_expense)

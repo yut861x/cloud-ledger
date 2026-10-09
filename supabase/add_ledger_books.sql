@@ -1,5 +1,5 @@
 -- 在已运行 supabase/schema.sql 的项目中执行一次。
--- 迁移将已有账目归入每位用户的“默认账本”，不会删除账目。
+-- 迁移将已有账目归入每位用户的“日常消费”，不会删除账目。
 begin;
 
 create table public.ledger_books (
@@ -16,7 +16,7 @@ create unique index ledger_books_one_default_per_user
   on public.ledger_books (user_id) where is_default;
 
 insert into public.ledger_books (user_id, name, is_default)
-select id, '默认账本', true from auth.users;
+select id, '日常消费', true from auth.users;
 
 create or replace function public.create_default_ledger_book()
 returns trigger
@@ -26,7 +26,7 @@ set search_path = ''
 as $$
 begin
   insert into public.ledger_books (user_id, name, is_default)
-  values (new.id, '默认账本', true);
+  values (new.id, '日常消费', true);
   return new;
 end;
 $$;
