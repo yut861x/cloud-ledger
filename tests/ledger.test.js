@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { categoryBreakdown, defaultEntryForBook } from '../src/lib/ledger.js'
+import { bookCategory, bookCategoryLabels, categoryBreakdown, defaultEntryForBook } from '../src/lib/ledger.js'
 
 test('income-like book names start a new entry as income', () => {
   for (const name of ['副业', '我的工资', '红包账本', '额外收入', '兼职记录']) {
@@ -50,4 +50,23 @@ test('category breakdown has an empty state for missing or invalid amounts', () 
 test('built-in fixed expense book remains expense after renaming', () => {
   assert.deepEqual(defaultEntryForBook('每月房租', false, true), { type: 'expense', category: '其他' })
   assert.deepEqual(defaultEntryForBook('固定收入', false, true), { type: 'expense', category: '其他' })
+})
+
+test('book categories sort dynamic expense, fixed expense, dynamic income, fixed income', () => {
+  assert.deepEqual(bookCategoryLabels.map(({ type }) => type), [
+    'dynamic_expense', 'fixed_expense', 'dynamic_income', 'fixed_income',
+  ])
+  assert.equal(bookCategory({ name: '日常消费', is_default: true }), 'dynamic_expense')
+  assert.equal(bookCategory({ name: '工资账本', is_salary: true }), 'fixed_income')
+  assert.equal(bookCategory({ name: '固定支出', is_fixed_expense: true }), 'fixed_expense')
+  assert.equal(bookCategory({ name: '副业', book_type: 'dynamic_income' }), 'dynamic_income')
+  assert.equal(bookCategory({ name: '工资用途', book_type: 'dynamic_expense' }), 'dynamic_expense')
+  assert.equal(bookCategory({ name: '副业' }), 'dynamic_income')
+})
+
+test('explicit book category controls the default transaction type', () => {
+  assert.deepEqual(defaultEntryForBook('工资用途', false, false, 'dynamic_expense'), { type: 'expense', category: '餐饮' })
+  assert.deepEqual(defaultEntryForBook('房租', false, false, 'fixed_expense'), { type: 'expense', category: '其他' })
+  assert.deepEqual(defaultEntryForBook('副业', false, false, 'dynamic_income'), { type: 'income', category: '其他' })
+  assert.deepEqual(defaultEntryForBook('工资', false, false, 'fixed_income'), { type: 'income', category: '工资' })
 })

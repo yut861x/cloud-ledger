@@ -26,6 +26,7 @@
 ├── supabase/add_salary_schedule.sql # 工资账本与定时入账
 ├── supabase/add_fixed_expense_schedule.sql # 固定支出账本与定时支出
 ├── supabase/rename_default_book_to_daily.sql # 已有项目的默认账本改名
+├── supabase/add_book_types.sql    # 动态/固定收支四类账本
 ├── supabase/add_shortcut_tokens.sql # 快捷指令专用密钥
 ├── supabase/functions/shortcut-entry/index.ts # 安全写账接口
 ├── SHORTCUT_SETUP.md            # iPhone 快捷指令配置步骤
@@ -44,12 +45,14 @@
 ## 1. 建立 Supabase 项目
 
 1. 在 [Supabase Dashboard](https://supabase.com/dashboard) 新建项目。
-2. 打开 **SQL Editor**，先完整执行 [`supabase/schema.sql`](supabase/schema.sql)，再执行 [`supabase/add_ledger_books.sql`](supabase/add_ledger_books.sql)，接着执行 [`supabase/add_salary_schedule.sql`](supabase/add_salary_schedule.sql)，接着执行 [`supabase/add_fixed_expense_schedule.sql`](supabase/add_fixed_expense_schedule.sql)，最后执行 [`supabase/add_shortcut_tokens.sql`](supabase/add_shortcut_tokens.sql)。这些脚本会迁移旧账目、创建三个内置账本，并启用 Supabase Cron。每份脚本只需执行一次。Edge Function `shortcut-entry` 需单独部署，且关闭平台的旧版 JWT 校验，由函数内部校验专用密钥。
+2. 打开 **SQL Editor**，先完整执行 [`supabase/schema.sql`](supabase/schema.sql)，再执行 [`supabase/add_ledger_books.sql`](supabase/add_ledger_books.sql)，接着执行 [`supabase/add_salary_schedule.sql`](supabase/add_salary_schedule.sql)、[`supabase/add_fixed_expense_schedule.sql`](supabase/add_fixed_expense_schedule.sql)、[`supabase/add_book_types.sql`](supabase/add_book_types.sql)，最后执行 [`supabase/add_shortcut_tokens.sql`](supabase/add_shortcut_tokens.sql)。这些脚本会迁移旧账目、创建三个内置账本，并启用 Supabase Cron。每份脚本只需执行一次。Edge Function `shortcut-entry` 需单独部署，且关闭平台的旧版 JWT 校验，由函数内部校验专用密钥。
 3. 在 **Authentication → Providers → Email** 检查邮箱登录设置。若启用邮箱确认，注册后需要点邮件中的链接才能登录。测试期如果关闭确认，也可以直接注册登录。
 4. 在项目的 **Connect** 面板或 **Settings → API Keys** 找到 **Project URL** 和 **publishable key**。只用 publishable key；不要把 secret/service_role key 放进前端或 GitHub。
 5. 在 **Authentication → URL Configuration** 设置 Site URL 与 Redirect URLs：本地先加入 `http://localhost:5173/`，部署后再加入实际 Pages 地址，例如 `https://USERNAME.github.io/REPO/`。若启用邮箱确认，邮件回跳需要允许这个地址。
 
 已有项目升级时，在 SQL Editor 额外执行一次 [`supabase/rename_default_book_to_daily.sql`](supabase/rename_default_book_to_daily.sql)。它只将仍叫「默认账本」的默认账本改为「日常消费」，保留用户自定义的名称和原有账目关联。
+
+已有项目还需在 SQL Editor 执行一次 [`supabase/add_book_types.sql`](supabase/add_book_types.sql)，再使用账本类别编辑功能；执行前现有账本仍可按名称和内置标记显示，但不能保存类别修改。四类依次为动态支出、固定支出、动态收入、固定收入。“固定”分类本身不创建自动计划，自动记账仍由内置工资／固定支出账本管理。
 
 账本表为 `ledger_books`；账目通过 `book_id` 归属到账本，数据库外键确保账本与账目属于同一用户。数据库字段：`id`、`user_id`、`book_id`、`type`、`amount`、`category`、`note`、`occurred_on`、`created_at`。金额使用 `numeric(12,2)`，按本地所选日期存 `date`；界面当前以人民币显示。前端分类与 SQL 约束同步维护，增加分类时两处都要更新。
 
