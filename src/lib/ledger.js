@@ -19,6 +19,20 @@ export const categories = {
 export const categoryMeta = (type, name) =>
   categories[type]?.find((item) => item.name === name) || categories[type]?.at(-1) || categories.expense.at(-1)
 
+export function categoryBreakdown(rows, type) {
+  const totals = new Map()
+  for (const row of rows) {
+    if (row.type !== type) continue
+    const amount = Number(row.amount)
+    if (!Number.isFinite(amount) || amount <= 0) continue
+    totals.set(row.category, (totals.get(row.category) || 0) + amount)
+  }
+  const total = [...totals.values()].reduce((sum, amount) => sum + amount, 0)
+  return [...totals].map(([name, amount]) => ({
+    name, amount, percent: amount / total * 100, color: categoryMeta(type, name).color,
+  })).sort((a, b) => b.amount - a.amount)
+}
+
 export const money = (value) => new Intl.NumberFormat('zh-CN', {
   style: 'currency', currency: 'CNY', minimumFractionDigits: 2,
 }).format(Number(value) || 0)
